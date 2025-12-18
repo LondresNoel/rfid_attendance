@@ -3,13 +3,9 @@ include "db.php";
 
 // Get date
 $active_date = isset($_GET['date']) ? $_GET['date'] : date("Y-m-d");
-
-// Get block number coming from BLOCK_X.php
 $block_id = isset($_GET['block']) ? intval($_GET['block']) : 1;
 
-// ===============================================
-// GET ALL DATES THAT HAVE ATTENDANCE FOR THIS BLOCK
-// ===============================================
+// Get all attendance dates for the block
 $dates_res = $conn->query("
     SELECT DISTINCT a.date 
     FROM attendance a
@@ -19,32 +15,30 @@ $dates_res = $conn->query("
 ");
 
 $date_arr = [];
-while ($r = $dates_res->fetch_assoc()) {
-    $date_arr[] = $r['date'];
-}
+while ($r = $dates_res->fetch_assoc()) $date_arr[] = $r['date'];
 
-// ===============================================
-// GET STUDENTS FOR THIS BLOCK ONLY
-// ===============================================
+// Get students in this block
 $students = $conn->query("
     SELECT * FROM students 
     WHERE block = $block_id
     ORDER BY name ASC
 ");
 
-// ===============================================
-// BUILD TABLE
-// ===============================================
-echo "<table class='table' style='border-collapse:collapse; width:100%;'>";
+// Build table
+echo "<table class='table' style='border-collapse:collapse;width:100%;'>";
 echo "<tr>
         <th>Name</th>";
-foreach ($date_arr as $d) echo "<th>$d</th>";
+foreach ($date_arr as $d) {
+    // Highlight active date column header
+    $header_style = "";
+    echo "<th style='$header_style'>$d</th>";
+}
 echo "<th>Late</th><th>Absent</th><th>Status</th></tr>";
 
 // Student rows
 while ($s = $students->fetch_assoc()) {
 
-    // Count total absences (all time)
+    // Count total absences
     $count_abs = $conn->query("
         SELECT COUNT(*) AS missing 
         FROM attendance 
@@ -52,59 +46,64 @@ while ($s = $students->fetch_assoc()) {
         AND status='absent'
     ")->fetch_assoc()['missing'];
 
-    // Determine row color
+    // Determine row color and status
     if ($count_abs >= 5) {
-        $conn->query("UPDATE students SET status='dropped' WHERE id={$s['id']}");
         $status = "DROPPED";
-        $row_color = "style='background:#ffb3b3;font-weight:bold;'";
+        $row_color = "background-color:#ffb3b3;font-weight:bold;"; // red
     } elseif ($count_abs >= 3) {
         $status = "ACTIVE";
-        $row_color = "style='background:#fff5b1;'"; // yellow warning
+        $row_color = "background-color:#fff5b1;"; // yellow warning
     } else {
         $status = "ACTIVE";
-        $row_color = "";
+        $row_color = ""; // default
     }
 
-    echo "<tr $row_color>";
+    echo "<tr style='$row_color'>";
     echo "<td>{$s['name']}</td>";
 
-    // Show √ or blank per date, green background if present
+    // Attendance per date
     foreach ($date_arr as $d) {
         $a = $conn->query("
             SELECT status 
             FROM attendance 
-            WHERE student_id={$s['id']} 
-            AND date='$d'
-            LIMIT 1
+            WHERE student_id={$s['id']} AND date='$d' LIMIT 1
         ");
-
+        $cell_style = ""; // active date highlight
         if ($a->num_rows > 0) {
             $ar = $a->fetch_assoc();
             if ($ar['status'] === 'present') {
-                echo "<td style='background:#d4edda;font-weight:bold;'>√</td>"; // green box
+                echo "<td style='background:#d4edda;font-weight:bold;$cell_style'>√</td>"; // green
+            } elseif ($ar['status'] === 'absent') {
+                echo "<td style='background:#f8d7da;font-weight:bold;$cell_style'>--</td>"; // light red
             } else {
-                echo "<td>-</td>";
+                echo "<td style='$cell_style'>-</td>"; // placeholder
             }
         } else {
-            echo "<td>-</td>";
+            echo "<td style='$cell_style'>-</td>";
         }
     }
 
-    // LATE depends on selected date
-    $row = $conn->query("
-        SELECT * FROM attendance 
-        WHERE student_id={$s['id']} 
-        AND date='$active_date' 
-        LIMIT 1
-    ");
-    $late = 0;
-    if ($row->num_rows > 0) {
-        $r = $row->fetch_assoc();
-        $late = intval($r['late']);
-    }
+    // Total late for the student in this block
+$late_row = $conn->query("
+    SELECT SUM(late) AS total_late 
+    FROM attendance a
+    JOIN students s ON a.student_id = s.id
+    WHERE s.block = $block_id AND a.student_id={$s['id']}
+");
+$late = ($late_row->num_rows > 0) ? intval($late_row->fetch_assoc()['total_late']) : 0;
 
-    echo "<td class='late'>$late</td>";
-    echo "<td class='absent'>$count_abs</td>";
+// Total absent for the student in this block
+$abs_row = $conn->query("
+    SELECT COUNT(*) AS total_absent
+    FROM attendance a
+    JOIN students s ON a.student_id = s.id
+    WHERE s.block = $block_id AND a.student_id={$s['id']} AND a.status='absent'
+");
+$absent = ($abs_row->num_rows > 0) ? intval($abs_row->fetch_assoc()['total_absent']) : 0;
+
+
+    echo "<td>$late</td>";
+    echo "<td>$absent</td>";
     echo "<td>$status</td>";
 
     echo "</tr>";
@@ -112,4 +111,3 @@ while ($s = $students->fetch_assoc()) {
 
 echo "</table>";
 ?>
-
